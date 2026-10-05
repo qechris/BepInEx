@@ -20,6 +20,11 @@ namespace BepInEx.Preloader.Core
 
         public bool Is64Bit { get; set; }
 
+        /// <summary>
+        ///     Machine type the assembly was built for, with any ReadyToRun OS encoding removed.
+        /// </summary>
+        public TargetArchitecture Architecture { get; set; }
+
         public FrameworkType AssemblyFrameworkType { get; set; }
 
         private void SetNet4Version(AssemblyDefinition assemblyDefinition)
@@ -118,12 +123,18 @@ namespace BepInEx.Preloader.Core
                 MainModule.Attributes: ILOnly
             */
 
-            var architecture = assemblyDefinition.MainModule.Architecture;
+            var architecture = NormalizeArchitecture(assemblyDefinition.MainModule.Architecture);
             var attributes = assemblyDefinition.MainModule.Attributes;
+            buildInfo.Architecture = architecture;
 
-            if (architecture == TargetArchitecture.AMD64)
+            if (architecture is TargetArchitecture.AMD64 or TargetArchitecture.ARM64 or TargetArchitecture.IA64)
             {
                 buildInfo.Is64Bit = true;
+                buildInfo.IsAnyCpu = false;
+            }
+            else if (architecture is TargetArchitecture.ARM or TargetArchitecture.ARMv7)
+            {
+                buildInfo.Is64Bit = false;
                 buildInfo.IsAnyCpu = false;
             }
             else if (architecture == TargetArchitecture.I386 && HasFlag(attributes, ModuleAttributes.Preferred32Bit | ModuleAttributes.Required32Bit))
@@ -143,10 +154,41 @@ namespace BepInEx.Preloader.Core
             }
             else
             {
-                throw new Exception("Unable to determine assembly architecture");
+                // Only used for logging and a bitness warning, so don't stop the preloader over an unknown machine type
+                buildInfo.Is64Bit = false;
+                buildInfo.IsAnyCpu = false;
             }
 
             return buildInfo;
+        }
+
+        // ReadyToRun images XOR the PE machine type with an OS-specific value (zero on Windows)
+        private static readonly ushort[] ReadyToRunOsMachineMasks =
+        {
+            0x7B79, // Linux
+            0x4644, // Apple
+            0xADC4, // FreeBSD
+            0x1993, // NetBSD
+            0x1992  // SunOS
+        };
+
+        private static bool IsKnownArchitecture(TargetArchitecture architecture) =>
+            architecture is TargetArchitecture.I386 or TargetArchitecture.AMD64 or TargetArchitecture.IA64
+                         or TargetArchitecture.ARM or TargetArchitecture.ARMv7 or TargetArchitecture.ARM64;
+
+        private static TargetArchitecture NormalizeArchitecture(TargetArchitecture architecture)
+        {
+            if (IsKnownArchitecture(architecture))
+                return architecture;
+
+            foreach (var mask in ReadyToRunOsMachineMasks)
+            {
+                var candidate = (TargetArchitecture) ((ushort) architecture ^ mask);
+                if (IsKnownArchitecture(candidate))
+                    return candidate;
+            }
+
+            return architecture;
         }
 
         private static bool HasFlag(ModuleAttributes value, ModuleAttributes flag)
@@ -170,7 +212,18 @@ namespace BepInEx.Preloader.Core
                 return $".NET {frameworkType} {NetFrameworkVersion}, AnyCPU ({(Is64Bit ? "64" : "32")}-bit preferred)";
             }
 
-            return $".NET {frameworkType} {NetFrameworkVersion}, {(Is64Bit ? "x64" : "x86")}";
+            var architecture = Architecture switch
+            {
+                TargetArchitecture.I386                            => "x86",
+                TargetArchitecture.AMD64                           => "x64",
+                TargetArchitecture.ARM64                           => "ARM64",
+                TargetArchitecture.ARM or TargetArchitecture.ARMv7 => "ARM",
+                TargetArchitecture.IA64                            => "IA64",
+                0                                                  => Is64Bit ? "x64" : "x86", // Built without DetermineInfo
+                _                                                  => $"unknown architecture (0x{(ushort) Architecture:X4})"
+            };
+
+            return $".NET {frameworkType} {NetFrameworkVersion}, {architecture}";
         }
     }
 }
