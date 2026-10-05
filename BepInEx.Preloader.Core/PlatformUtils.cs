@@ -120,7 +120,7 @@ internal static class PlatformUtils
                     //  - Reading from that property freezes it: subsequent writes will throw an exception.
                     //  - This method only sets PlatformHelper.Current at the very end.
                     var getVersion = Marshal.GetDelegateForFunctionPointer(wineGetVersion, typeof(GetWineVersionDelegate)) as GetWineVersionDelegate;
-                    WineVersion = getVersion();
+                    WineVersion = Marshal.PtrToStringAnsi(getVersion());
                 }
             }
         }
@@ -265,9 +265,9 @@ internal static class PlatformUtils
         return machine;
     }
 
+    // Returns a static string owned by Wine, so it must not be marshalled as string (the marshaller would free it)
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    [return: MarshalAs(UnmanagedType.LPStr)]
-    private delegate string GetWineVersionDelegate();
+    private delegate IntPtr GetWineVersionDelegate();
 
     [StructLayout(LayoutKind.Sequential, Pack = 1, CharSet = CharSet.Unicode)]
     public struct WindowsOSVersionInfoExW
