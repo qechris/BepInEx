@@ -36,8 +36,9 @@ internal static unsafe class FunchookLib
     [DllImport("funchook", EntryPoint = "funchook_uninstall", CallingConvention = CallingConvention.Cdecl)]
     public static extern FunchookResult Uninstall(nint handle, int flags);
 
+    // Returns a pointer into the funchook instance, so it must not be marshalled as string (the marshaller would free it)
     [DllImport("funchook", EntryPoint = "funchook_error_message", CallingConvention = CallingConvention.Cdecl)]
-    public static extern string ErrorMessage(nint handle);
+    public static extern nint ErrorMessage(nint handle);
 
     [DllImport("funchook", EntryPoint = "funchook_set_debug_file", CallingConvention = CallingConvention.Cdecl)]
     public static extern FunchookResult SetDebugFile([MarshalAs(UnmanagedType.LPStr)] string name);
