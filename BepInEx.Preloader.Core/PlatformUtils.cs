@@ -22,6 +22,12 @@ internal static class PlatformUtils
     public static string MacOSVersion { get; private set; }
 
     /// <summary>
+    ///     Darwin kernel release (e.g. "23.5.0"). Unlike <see cref="MacOSVersion" />, it isn't shimmed for games built
+    ///     against older SDKs, which see macOS 11+ as "10.16" and macOS 26 as "16.0".
+    /// </summary>
+    public static string MacOSKernelVersion { get; private set; }
+
+    /// <summary>
     ///     True when this is an x86_64 process translated by Rosetta 2 on Apple Silicon.
     /// </summary>
     public static bool RosettaTranslated { get; private set; }
@@ -139,6 +145,8 @@ internal static class PlatformUtils
                     var utsname_osx = new utsname_osx();
                     result = uname_osx(ref utsname_osx);
                     arch = utsname_osx.machine;
+
+                    MacOSKernelVersion = utsname_osx.release;
                 }
                 else
                 {
@@ -154,9 +162,10 @@ internal static class PlatformUtils
                 if (result != IntPtr.Zero)
                     arch = null;
             }
-            catch (Exception)
+            catch (Exception) when (GetRuntimeProcessArchitecture() != null)
             {
-                // No usable libc (e.g. musl without libc.so.6); fall back to what the runtime reports
+                // No usable libc (e.g. musl without libc.so.6), but the runtime reports the architecture itself.
+                // Mono can't, so there the exception still stops BepInEx rather than guessing the wrong detour platform.
             }
 
             if (current.Is(Platform.MacOS))

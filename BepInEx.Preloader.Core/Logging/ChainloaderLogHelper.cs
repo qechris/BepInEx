@@ -106,6 +106,8 @@ public static class ChainloaderLogHelper
             if (PlatformUtils.MacOSVersion != null)
             {
                 builder.Append(PlatformUtils.MacOSVersion);
+                if (PlatformUtils.MacOSKernelVersion != null)
+                    builder.AppendFormat(" (kernel {0})", PlatformUtils.MacOSKernelVersion);
             }
             else if (MacOSVersions.TryGetValue(osxVersion, out var macOsVersion))
             {
