@@ -45,8 +45,9 @@ public static class ChainloaderLogHelper
             log.Log(LogLevel.Message, $"Built from commit {Paths.BepInExVersion.Build}");
 
         Logger.Log(LogLevel.Info, $"System platform: {GetPlatformString()}");
+        var processArchitecture = PlatformUtils.ProcessArchitecture ?? (PlatformUtils.ProcessIs64Bit ? "x64" : "x86");
         Logger.Log(LogLevel.Info,
-                   $"Process bitness: {(PlatformUtils.ProcessIs64Bit ? "64-bit (x64)" : "32-bit (x86)")}");
+                   $"Process bitness: {(PlatformUtils.ProcessIs64Bit ? "64-bit" : "32-bit")} ({processArchitecture})");
     }
 
     private static string GetPlatformString()
@@ -102,7 +103,11 @@ public static class ChainloaderLogHelper
 
             var osxVersion = osVersion.ToString(3);
 
-            if (MacOSVersions.TryGetValue(osxVersion, out var macOsVersion))
+            if (PlatformUtils.MacOSVersion != null)
+            {
+                builder.Append(PlatformUtils.MacOSVersion);
+            }
+            else if (MacOSVersions.TryGetValue(osxVersion, out var macOsVersion))
             {
                 builder.Append(macOsVersion);
             }
@@ -135,6 +140,9 @@ public static class ChainloaderLogHelper
             if (PlatformHelper.Is(Platform.Bits64))
                 builder.Append("64");
         }
+
+        if (PlatformUtils.RosettaTranslated)
+            builder.Append(" (Rosetta 2)");
 
         return builder.ToString();
     }

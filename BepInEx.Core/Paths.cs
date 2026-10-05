@@ -108,7 +108,8 @@ public static class Paths
         ExecutablePath = executablePath;
         ProcessName = Path.GetFileNameWithoutExtension(executablePath);
 
-        GameRootPath = PlatformHelper.Is(Platform.MacOS)
+        // Only Unity's Game.app/Contents/MacOS/Game layout puts the game root outside the executable's folder
+        GameRootPath = PlatformHelper.Is(Platform.MacOS) && executablePath.Contains(".app/Contents/MacOS/")
                            ? Utility.ParentDirectory(executablePath, 4)
                            : Path.GetDirectoryName(executablePath);
 

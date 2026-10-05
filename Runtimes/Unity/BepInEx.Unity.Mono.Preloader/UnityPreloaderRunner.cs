@@ -6,6 +6,7 @@ using BepInEx.Preloader.Core;
 using BepInEx.Preloader.RuntimeFixes;
 using BepInEx.Unity.Mono.Preloader.RuntimeFixes;
 using BepInEx.Unity.Mono.Preloader.Utils;
+using MonoMod.Utils;
 
 namespace BepInEx.Unity.Mono.Preloader;
 
@@ -45,6 +46,15 @@ internal static class UnityPreloaderRunner
     public static void PreloaderPreMain()
     {
         PlatformUtils.SetPlatform();
+
+        // HarmonyX 2.10 (legacy MonoMod) can't write to Mono's JIT code under Apple Silicon's W^X rules,
+        // so the first runtime patch would crash the game. run_bepinex.sh runs the game under Rosetta 2 instead.
+        if (PlatformHelper.Is(Platform.MacOS) && PlatformHelper.Is(Platform.ARM))
+        {
+            Console.Error.WriteLine("[BepInEx] Unity Mono games can't be modded as native Apple Silicon (arm64) processes yet, " +
+                                    "so BepInEx will not load. Start the game with run_bepinex.sh to run it under Rosetta 2.");
+            return;
+        }
 
         var bepinPath = Utility.ParentDirectory(Path.GetFullPath(EnvVars.DOORSTOP_INVOKE_DLL_PATH), 2);
 

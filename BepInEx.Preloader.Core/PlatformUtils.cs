@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using MonoMod.Utils;
 
 namespace BepInEx.Preloader.Core;
@@ -15,6 +16,21 @@ internal static class PlatformUtils
     public static string LinuxArchitecture { get; set; }
     public static string LinuxKernelVersion { get; set; }
 
+    /// <summary>
+    ///     macOS product version (e.g. "14.5"), or null if it couldn't be read.
+    /// </summary>
+    public static string MacOSVersion { get; private set; }
+
+    /// <summary>
+    ///     True when this is an x86_64 process translated by Rosetta 2 on Apple Silicon.
+    /// </summary>
+    public static bool RosettaTranslated { get; private set; }
+
+    /// <summary>
+    ///     CPU architecture of the current process ("x86", "x64", "ARM", "ARM64"), or null if it wasn't detected.
+    /// </summary>
+    public static string ProcessArchitecture { get; private set; }
+
     [DllImport("libc.so.6", EntryPoint = "uname", CallingConvention = CallingConvention.Cdecl,
                CharSet = CharSet.Ansi)]
     private static extern IntPtr uname_linux(ref utsname_linux utsname);
@@ -22,6 +38,12 @@ internal static class PlatformUtils
     [DllImport("/usr/lib/libSystem.dylib", EntryPoint = "uname", CallingConvention = CallingConvention.Cdecl,
                CharSet = CharSet.Ansi)]
     private static extern IntPtr uname_osx(ref utsname_osx utsname);
+
+    [DllImport("/usr/lib/libSystem.dylib", EntryPoint = "sysctlbyname", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int sysctlbyname_int(string name, ref int oldp, ref UIntPtr oldlenp, IntPtr newp, UIntPtr newlen);
+
+    [DllImport("/usr/lib/libSystem.dylib", EntryPoint = "sysctlbyname", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int sysctlbyname_bytes(string name, byte[] oldp, ref UIntPtr oldlenp, IntPtr newp, UIntPtr newlen);
 
     [DllImport("ntdll.dll", SetLastError = true)]
     private static extern bool RtlGetVersion(ref WindowsOSVersionInfoExW versionInfo);
@@ -58,6 +80,12 @@ internal static class PlatformUtils
             current = Platform.MacOS;
         else if (platID.Contains("lin") || platID.Contains("unix"))
             current = Platform.Linux;
+
+#if NETSTANDARD2_0
+        // .NET Core reports PlatformID.Unix on macOS for compatibility with Mono
+        if (current == Platform.Linux && RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+            current = Platform.MacOS;
+#endif
 
         if (current.Is(Platform.Linux) && Directory.Exists("/data") && File.Exists("/system/build.prop"))
             current = Platform.Android;
@@ -99,29 +127,51 @@ internal static class PlatformUtils
         else
             current |= IntPtr.Size >= 8 ? Platform.Bits64 : 0;
 
-        if ((current.Is(Platform.MacOS) || current.Is(Platform.Linux)) && Type.GetType("Mono.Runtime") != null)
+        if (current.Is(Platform.MacOS) || current.Is(Platform.Linux))
         {
-            string arch;
+            string arch = null;
             IntPtr result;
+
+            try
+            {
+                if (current.Is(Platform.MacOS))
+                {
+                    var utsname_osx = new utsname_osx();
+                    result = uname_osx(ref utsname_osx);
+                    arch = utsname_osx.machine;
+                }
+                else
+                {
+                    // Linux
+                    var utsname_linux = new utsname_linux();
+                    result = uname_linux(ref utsname_linux);
+                    arch = utsname_linux.machine;
+
+                    LinuxArchitecture = utsname_linux.machine;
+                    LinuxKernelVersion = utsname_linux.version;
+                }
+
+                if (result != IntPtr.Zero)
+                    arch = null;
+            }
+            catch (Exception)
+            {
+                // No usable libc (e.g. musl without libc.so.6); fall back to what the runtime reports
+            }
 
             if (current.Is(Platform.MacOS))
             {
-                var utsname_osx = new utsname_osx();
-                result = uname_osx(ref utsname_osx);
-                arch = utsname_osx.machine;
+                MacOSVersion = GetMacOSProductVersion();
+                RosettaTranslated = IsRosettaTranslated();
             }
+
+            // Rosetta 2 only runs x86_64 code; check it explicitly instead of trusting uname inside a translated process
+            if (RosettaTranslated)
+                ProcessArchitecture = "x64";
             else
-            {
-                // Linux
-                var utsname_linux = new utsname_linux();
-                result = uname_linux(ref utsname_linux);
-                arch = utsname_linux.machine;
+                ProcessArchitecture = GetRuntimeProcessArchitecture() ?? ArchitectureFromUname(arch);
 
-                LinuxArchitecture = utsname_linux.machine;
-                LinuxKernelVersion = utsname_linux.version;
-            }
-
-            if (result == IntPtr.Zero && (arch.StartsWith("aarch") || arch.StartsWith("arm")))
+            if (ProcessArchitecture is "ARM" or "ARM64")
                 current |= Platform.ARM;
         }
         else
@@ -133,6 +183,77 @@ internal static class PlatformUtils
         }
 
         PlatformHelper.Current = current;
+    }
+
+    private static string GetRuntimeProcessArchitecture()
+    {
+#if NETSTANDARD2_0
+        // CoreCLR knows its own architecture; Mono keeps using uname as it always has
+        if (Type.GetType("Mono.Runtime") == null)
+        {
+            return RuntimeInformation.ProcessArchitecture switch
+            {
+                Architecture.X86   => "x86",
+                Architecture.X64   => "x64",
+                Architecture.Arm   => "ARM",
+                Architecture.Arm64 => "ARM64",
+                var other          => other.ToString()
+            };
+        }
+#endif
+        return null;
+    }
+
+    private static bool IsRosettaTranslated()
+    {
+        try
+        {
+            // sysctl.proc_translated is 1 under Rosetta 2, 0 for native processes and missing on Intel Macs
+            var translated = 0;
+            var size = (UIntPtr) sizeof(int);
+            return sysctlbyname_int("sysctl.proc_translated", ref translated, ref size, IntPtr.Zero, UIntPtr.Zero) == 0 &&
+                   translated == 1;
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static string GetMacOSProductVersion()
+    {
+        try
+        {
+            // kern.osproductversion exists since macOS 10.13.4
+            var buffer = new byte[64];
+            var size = (UIntPtr) buffer.Length;
+            if (sysctlbyname_bytes("kern.osproductversion", buffer, ref size, IntPtr.Zero, UIntPtr.Zero) != 0)
+                return null;
+            var length = Array.IndexOf(buffer, (byte) 0);
+            return Encoding.ASCII.GetString(buffer, 0, length < 0 ? (int) size.ToUInt32() : length);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    private static string ArchitectureFromUname(string machine)
+    {
+        if (string.IsNullOrEmpty(machine))
+            return null;
+
+        // uname reports the kernel's architecture, so a 32-bit process on a 64-bit kernel still sees the 64-bit name
+        var is64BitProcess = IntPtr.Size >= 8;
+        if (machine.StartsWith("aarch64") || machine.StartsWith("arm64"))
+            return is64BitProcess ? "ARM64" : "ARM";
+        if (machine.StartsWith("arm"))
+            return "ARM";
+        if (machine == "x86_64" || machine == "amd64")
+            return is64BitProcess ? "x64" : "x86";
+        if (machine is "i386" or "i486" or "i586" or "i686")
+            return "x86";
+        return machine;
     }
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]

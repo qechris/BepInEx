@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Reflection;
-using System.Runtime.InteropServices;
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using BepInEx.Unity.IL2CPP.Hook.Dobby;
@@ -31,7 +30,7 @@ public interface INativeDetour : IDetour
 
     public static INativeDetour Create<T>(nint original, T target) where T : Delegate
     {
-        var resolved = FollowExportThunks(original);
+        var resolved = ExportThunkResolver.Follow(original);
         if (resolved != original)
             ThunkLog.LogDebug($"Resolved export thunk 0x{original:X} -> 0x{resolved:X}");
         original = resolved;
@@ -48,42 +47,6 @@ public interface INativeDetour : IDetour
         }
 
         return detour;
-    }
-
-    /// <summary>
-    /// PE exports are often a <c>jmp rel32</c> (or <c>jmp [rip+disp]</c>) stub with int3 padding.
-    /// Dobby aborts if asked to patch that stub. Follow to the real prologue first.
-    /// No-op when the pointer is already a function body.
-    /// </summary>
-    private static nint FollowExportThunks(nint func)
-    {
-        if (func == 0) return func;
-        var fn = func;
-        for (var hops = 0; hops < 8; hops++)
-        {
-            byte op;
-            try { op = Marshal.ReadByte(fn); }
-            catch { return fn; }
-
-            if (op == 0xE9)
-            {
-                fn += 5 + Marshal.ReadInt32(fn + 1);
-                continue;
-            }
-
-            if (op == 0xFF && Marshal.ReadByte(fn + 1) == 0x25)
-            {
-                if (IntPtr.Size == 8)
-                    fn = Marshal.ReadIntPtr(fn + 6 + Marshal.ReadInt32(fn + 2));
-                else
-                    fn = Marshal.ReadIntPtr((nint)(uint)Marshal.ReadInt32(fn + 2));
-                continue;
-            }
-
-            break;
-        }
-
-        return fn;
     }
 
     public static INativeDetour CreateAndApply<T>(nint from, T to, out T original)
