@@ -6,6 +6,7 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -42,6 +43,7 @@ internal static partial class Il2CppInteropManager
     {
         InstructionSetRegistry.RegisterInstructionSet<X86InstructionSet>(DefaultInstructionSets.X86_32);
         InstructionSetRegistry.RegisterInstructionSet<X86InstructionSet>(DefaultInstructionSets.X86_64);
+        InstructionSetRegistry.RegisterInstructionSet<NewArmV8InstructionSet>(DefaultInstructionSets.ARM_V8);
         LibCpp2IlBinaryRegistry.RegisterBuiltInBinarySupport();
     }
 
@@ -75,8 +77,8 @@ internal static partial class Il2CppInteropManager
 
     private static readonly ConfigEntry<bool> ScanMethodRefs = ConfigFile.CoreConfig.Bind(
      "IL2CPP", "ScanMethodRefs",
-     Environment.Is64BitProcess,
-     "If enabled, Il2CppInterop will use xref to find dead methods and generate CallerCount attributes.");
+     RuntimeInformation.ProcessArchitecture == Architecture.X64,
+     "If enabled, Il2CppInterop will use xref to find dead methods and generate CallerCount attributes.\nOnly supported on x86 and x64; ignored on other architectures.");
 
     private static readonly ConfigEntry<bool> DumpDummyAssemblies = ConfigFile.CoreConfig.Bind(
      "IL2CPP", "DumpDummyAssemblies",
@@ -394,7 +396,7 @@ internal static partial class Il2CppInteropManager
     {
         var opts = new GeneratorOptions
         {
-            GameAssemblyPath = ScanMethodRefs.Value ? GameAssemblyPath : null,
+            GameAssemblyPath = ShouldScanMethodRefs() ? GameAssemblyPath : null,
             Source = sourceAssemblies,
             OutputDir = IL2CPPInteropAssemblyPath,
             UnityBaseLibsDir = Directory.Exists(UnityBaseLibsDirectory) ? UnityBaseLibsDirectory : null,
@@ -417,6 +419,19 @@ internal static partial class Il2CppInteropManager
                               .AddLogger(logger)
                               .AddInteropAssemblyGenerator()
                               .Run();
+    }
+
+    private static bool ShouldScanMethodRefs()
+    {
+        if (!ScanMethodRefs.Value)
+            return false;
+
+        // Il2CppInterop's xref scanner can only decode x86 machine code
+        if (RuntimeInformation.ProcessArchitecture is Architecture.X86 or Architecture.X64)
+            return true;
+
+        Logger.LogWarning($"ScanMethodRefs is not supported on {RuntimeInformation.ProcessArchitecture}, skipping method xref scanning");
+        return false;
     }
 
     internal static void PreloadInteropAssemblies()

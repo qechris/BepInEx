@@ -29,9 +29,12 @@ internal static class XTermFix
         // Apparently on older Unity versions (4.x), using Process.Start can run Console..cctor
         // And since MonoMod's PlatformHelper (used by DetourHelper.Native) runs Process.Start to determine ARM/x86 platform,
         // this causes a crash owing to TermInfoReader running before it can be patched and fixed
-        // Because Doorstop does not support ARM at the moment, we can get away with just forcing x86 detour platform.
-        // TODO: Figure out a way to detect ARM on Unix without running Process.Start
-        DetourHelper.Native = new DetourNativeX86Platform();
+        // so on x86 we force the x86 detour platform for the duration of the fix.
+        // On ARM this isn't done: a bare DetourNativeARMPlatform can't make its icache flush stub executable,
+        // and PlatformUtils.SetPlatform has already set PlatformHelper.Current, so no Process.Start happens.
+        var forceNativePlatform = !PlatformHelper.Is(Platform.ARM);
+        if (forceNativePlatform)
+            DetourHelper.Native = new DetourNativeX86Platform();
 
         var harmony = new Harmony("com.bepinex.xtermfix");
 
@@ -47,7 +50,9 @@ internal static class XTermFix
         harmony.Patch(AccessTools.Method("System.TermInfoReader:GetStringBytes", new[] { AccessTools.TypeByName("System.TermInfoStrings") }),
                       transpiler: new HarmonyMethod(typeof(XTermFix), nameof(GetTermInfoStringsTranspiler)));
 
-        DetourHelper.Native = null;
+        // Only reset what we set; once MonoMod has initialized DetourHelper.Native itself, setting it to null breaks it
+        if (forceNativePlatform)
+            DetourHelper.Native = null;
     }
 
     public static int GetInt32(byte[] buffer, int offset)

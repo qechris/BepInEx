@@ -24,6 +24,8 @@ BepInEx is a plugin / modding framework for Unity Mono, IL2CPP and .NET framewor
 | Unity IL2CPP | ✔️      | ❌   | ✔     | ❌  |
 | .NET / XNA   | ✔️      | Mono | Mono  | N/A |
 
+On Apple Silicon Macs, `run_bepinex.sh` runs the game as x86_64 under Rosetta 2. Games without an x86_64 (Intel) build can't be modded yet.
+
 A more comprehensive comparison list of features and compatibility is available at https://bepis.io/unity.html
 
 ## Resources

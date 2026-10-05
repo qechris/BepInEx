@@ -148,6 +148,10 @@ case ${os_type} in
                 is_apple_silicon=1
             ;;
         esac
+        # hw.optional.arm64 is also 1 when this script itself runs under Rosetta 2
+        if [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = "1" ]; then
+            is_apple_silicon=1
+        fi
     ;;
     *)
         # alright whos running games on freebsd
@@ -321,13 +325,26 @@ else
 fi
 
 if [ -n "${is_apple_silicon}" ]; then
-    export ARCHPREFERENCE="arm64,x86_64"
+    # BepInEx can't mod native Apple Silicon (arm64) games yet: HarmonyX can't patch code under arm64 W^X rules,
+    # and the IL2CPP package ships x86_64-only native libraries. Run the game as x86_64 under Rosetta 2 instead.
+    case "${file_out}" in
+        *x86_64*|*shell\ script*) ;;
+        *)
+            echo "\"${executable_path}\" has no x86_64 (Intel) code, so it can't run under Rosetta 2." 1>&2
+            echo "BepInEx can't mod native Apple Silicon (arm64) games yet." 1>&2
+            exit 1
+        ;;
+    esac
 
-    # We need to use arch for Apple Silicon to allow the executable to be run natively as otherwise if
-    # the executable is universal, supporting both x86_64 and arm64, MacOs will still run it as x86_64
-    # if the parent process is running as x86.
-    # arch also strips the DYLD_INSERT_LIBRARIES env var so we have to pass that in manually
-    exec arch -e DYLD_INSERT_LIBRARIES="${DYLD_INSERT_LIBRARIES}" "$executable_path" "$@"
+    if ! arch -x86_64 /usr/bin/true 2>/dev/null; then
+        echo "Rosetta 2 is needed to run this game with BepInEx on Apple Silicon." 1>&2
+        echo "Install it with: softwareupdate --install-rosetta" 1>&2
+        exit 1
+    fi
+
+    # arch strips DYLD_* variables from its environment, so pass them in manually
+    exec arch -x86_64 -e DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH}" -e DYLD_INSERT_LIBRARIES="${DYLD_INSERT_LIBRARIES}" \
+        "$executable_path" "$@"
 else
     exec "$executable_path" "$@"
 fi
